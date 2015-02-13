@@ -43,7 +43,9 @@ namespace MissionPlanner.Joystick
             if (CMB_joysticks.Items.Count > 0 && CMB_joysticks.SelectedIndex == -1)
                 CMB_joysticks.SelectedIndex = 0;
 
-            if (MainV2.config["joystick_name"] != "")
+            //check for null entry... probably only happens in debug mode...
+            if (MainV2.config["joystick_name"] != null 
+                && (string)MainV2.config["joystick_name"] != "")
                 CMB_joysticks.Text = MainV2.config["joystick_name"].ToString();
 
             CMB_CH1.DataSource = (Enum.GetValues(typeof(Joystick.joystickaxis)));
