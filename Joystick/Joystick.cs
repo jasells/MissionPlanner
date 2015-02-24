@@ -4,20 +4,37 @@ using System.Collections;
 using System.Linq;
 using System.Text;
 using log4net;
-using Microsoft.DirectX.DirectInput;
+//using Microsoft.DirectX.DirectInput;
+using SharpDX.DirectInput;
 //using OpenTK.Input;
 using System.Reflection;
 using System.IO;
 
 namespace MissionPlanner.Joystick
 {
+    public class DeviceList : List<DeviceInstance>
+    {
+        //public static implicit operator DeviceList(IList<DeviceInstance> l)
+        //{
+        //    return (List<DeviceInstance>)l;
+        //}
+
+        public DeviceList() : base() { }
+
+        public DeviceList(IList<DeviceInstance> source)
+            : base(source)
+        { }
+    }
+
     public class Joystick : IDisposable
     {
+
+
         private static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
-        Device joystick;
+        SharpDX.DirectInput.Joystick joystick;
         JoystickState state;
         public bool enabled = false;
-        byte[] buttonpressed = new byte[128];
+        bool[] buttonpressed = new bool[128];
         public string name;
         public bool elevons = false;
 
@@ -213,15 +230,33 @@ namespace MissionPlanner.Joystick
         JoyChannel[] JoyChannels = new JoyChannel[9]; // we are base 1
         JoyButton[] JoyButtons = new JoyButton[128]; // base 0
 
+        public static SharpDX.DirectInput.DirectInput Manager
+        {
+            get
+            {
+                if (myManager == null)
+                    myManager = new SharpDX.DirectInput.DirectInput();
+
+                return myManager;
+            }
+        }
+        private static SharpDX.DirectInput.DirectInput myManager;
+
         public static DeviceList getDevices()
         {
-            return Manager.GetDevices(DeviceClass.GameControl, EnumDevicesFlags.AttachedOnly);
+            return new DeviceList(Manager.GetDevices(DeviceClass.GameControl,
+                                    DeviceEnumerationFlags.AttachedOnly));
         }
 
         public bool start(string name)
         {
+            //SharpDX.DirectInput.DirectInput devMan = new SharpDX.DirectInput.DirectInput();
+            //var pads = devMan.GetDevices(SharpDX.DirectInput.DeviceType.Joystick,
+            //    SharpDX.DirectInput.DeviceEnumerationFlags.AttachedOnly);
+            
             self.name = name;
-            DeviceList joysticklist = Manager.GetDevices(DeviceClass.GameControl, EnumDevicesFlags.AttachedOnly);
+            IList<DeviceInstance> joysticklist = Manager.GetDevices(DeviceClass.GameControl,
+                                                DeviceEnumerationFlags.AttachedOnly);
 
             bool found = false;
 
@@ -229,7 +264,9 @@ namespace MissionPlanner.Joystick
             {
                 if (device.ProductName == name)
                 {
-                    joystick = new Device(device.InstanceGuid);
+
+                    joystick =JoyStickFactory(device);
+                    //new Device(device.InstanceGuid);
                     found = true;
                     break;
                 }
@@ -237,7 +274,7 @@ namespace MissionPlanner.Joystick
             if (!found)
                 return false;
 
-            joystick.SetDataFormat(DeviceDataFormat.Joystick);
+            //joystick.SetDataFormat(DeviceDataFormat.Joystick);
 
             joystick.Acquire();
 
@@ -256,20 +293,25 @@ namespace MissionPlanner.Joystick
             return true;
         }
 
+        static private SharpDX.DirectInput.Joystick JoyStickFactory(DeviceInstance device)
+        {
+            return new SharpDX.DirectInput.Joystick(Manager, device.InstanceGuid);
+        }
+
         public static joystickaxis getMovingAxis(string name, int threshold)
         {
             self.name = name;
-            DeviceList joysticklist = Manager.GetDevices(DeviceClass.GameControl, EnumDevicesFlags.AttachedOnly);
+            DeviceList joysticklist = getDevices();//Manager.GetDevices(DeviceClass.GameControl, DeviceEnumerationFlags.AttachedOnly);
 
             bool found = false;
 
-            Device joystick = null;
+            SharpDX.DirectInput.Joystick joystick = null;
 
             foreach (DeviceInstance device in joysticklist)
             {
                 if (device.ProductName == name)
                 {
-                    joystick = new Device(device.InstanceGuid);
+                    joystick = JoyStickFactory(device); //new Device(device.InstanceGuid);
                     found = true;
                     break;
                 }
@@ -277,7 +319,7 @@ namespace MissionPlanner.Joystick
             if (!found)
                 return joystickaxis.ARx;
 
-            joystick.SetDataFormat(DeviceDataFormat.Joystick);
+            //joystick.SetDataFormat(DeviceDataFormat.Joystick);
 
             joystick.Acquire();
 
@@ -290,7 +332,8 @@ namespace MissionPlanner.Joystick
 
             System.Threading.Thread.Sleep(50);
 
-            JoystickState obj = joystick.CurrentJoystickState;
+            JoystickState obj = new JoystickState(); // joystick.CurrentJoystickState;
+            joystick.GetCurrentState(ref obj);
             Hashtable values = new Hashtable();
 
             // get the state of the joystick before.
@@ -298,12 +341,15 @@ namespace MissionPlanner.Joystick
             PropertyInfo[] properties = type.GetProperties();
             foreach (PropertyInfo property in properties)
             {
-                values[property.Name] = int.Parse(property.GetValue(obj, null).ToString());
+                //watch for array type props...!
+                if(property.PropertyType != typeof(int[])
+                    && property.PropertyType != typeof(bool[]))
+                    values[property.Name] = int.Parse(property.GetValue(obj, null).ToString());
             }
-            values["Slider1"] = obj.GetSlider()[0];
-            values["Slider2"] = obj.GetSlider()[1];
-            values["Hatud1"] = obj.GetPointOfView()[0];
-            values["Hatlr2"] = obj.GetPointOfView()[0];
+            values["Slider1"] = obj.Sliders[0];
+            values["Slider2"] = obj.Sliders[1];
+            values["Hatud1"] = obj.PointOfViewControllers[0];
+            values["Hatlr2"] = obj.PointOfViewControllers[0];
             values["Custom1"] = 0;
             values["Custom2"] = 0;
 
@@ -315,26 +361,32 @@ namespace MissionPlanner.Joystick
             {
                 joystick.Poll();
                 System.Threading.Thread.Sleep(50);
-                JoystickState nextstate = joystick.CurrentJoystickState;
+                JoystickState nextstate = obj;
+                joystick.GetCurrentState(ref nextstate);
 
-                int[] slider = nextstate.GetSlider();
+                int[] slider = nextstate.Sliders;
 
-                int[] hat1 = nextstate.GetPointOfView();
+                int[] hat1 = nextstate.PointOfViewControllers;
 
                 type = nextstate.GetType();
                 properties = type.GetProperties();
                 foreach (PropertyInfo property in properties)
                 {
                     //Console.WriteLine("Name: " + property.Name + ", Value: " + property.GetValue(obj, null));
-
-                    log.InfoFormat("test name {0} old {1} new {2} ", property.Name, values[property.Name], int.Parse(property.GetValue(nextstate, null).ToString()));
-                    log.InfoFormat("{0}  {1} {2}", property.Name, (int)values[property.Name], (int.Parse(property.GetValue(nextstate, null).ToString()) + threshold));
-                    if ((int)values[property.Name] > (int.Parse(property.GetValue(nextstate, null).ToString()) + threshold) ||
-                        (int)values[property.Name] < (int.Parse(property.GetValue(nextstate, null).ToString()) - threshold))
+                    //watch for array type props...!
+                    if (property.PropertyType != typeof(int[])
+                        && property.PropertyType != typeof(bool[]))
                     {
-                        log.Info(property.Name);
-                        joystick.Unacquire();
-                        return (joystickaxis)Enum.Parse(typeof(joystickaxis), property.Name);
+                        log.InfoFormat("test name {0} old {1} new {2} ", property.Name, values[property.Name], int.Parse(property.GetValue(nextstate, null).ToString()));
+                        log.InfoFormat("{0}  {1} {2}", property.Name, (int)values[property.Name], (int.Parse(property.GetValue(nextstate, null).ToString()) + threshold));
+                        if ((int)values[property.Name] > (int.Parse(property.GetValue(nextstate, null).ToString()) + threshold) ||
+                            (int)values[property.Name] < (int.Parse(property.GetValue(nextstate, null).ToString()) - threshold))
+                        {
+                            log.Info(property.Name);
+                            joystick.Unacquire();
+                            return (joystickaxis)Enum.Parse(typeof(SDXjoystickaxis), 
+                                                            property.Name);
+                        }
                     }
                 }
 
@@ -377,17 +429,17 @@ namespace MissionPlanner.Joystick
         public static int getPressedButton(string name)
         {
             self.name = name;
-            DeviceList joysticklist = Manager.GetDevices(DeviceClass.GameControl, EnumDevicesFlags.AttachedOnly);
+            DeviceList joysticklist = getDevices();//Manager.GetDevices(DeviceClass.GameControl, DeviceEnumerationFlags.AttachedOnly);
 
             bool found = false;
 
-            Device joystick = null;
+            SharpDX.DirectInput.Joystick joystick = null;
 
             foreach (DeviceInstance device in joysticklist)
             {
                 if (device.ProductName == name)
                 {
-                    joystick = new Device(device.InstanceGuid);
+                    joystick = JoyStickFactory(device) ;//new Device(device.InstanceGuid);
                     found = true;
                     break;
                 }
@@ -395,7 +447,7 @@ namespace MissionPlanner.Joystick
             if (!found)
                 return -1;
 
-            joystick.SetDataFormat(DeviceDataFormat.Joystick);
+            //joystick.SetDataFormat(DeviceDataFormat.Joystick);
 
             joystick.Acquire();
 
@@ -403,9 +455,9 @@ namespace MissionPlanner.Joystick
 
             joystick.Poll();
 
-            JoystickState obj = joystick.CurrentJoystickState;
+            JoystickState obj = new JoystickState();
+            bool[] buttons = obj.Buttons;
 
-            byte[] buttonsbefore = obj.GetButtons();
 
             CustomMessageBox.Show("Please press the joystick button you want assigned to this function after clicking ok");
 
@@ -414,13 +466,12 @@ namespace MissionPlanner.Joystick
             while (start.AddSeconds(10) > DateTime.Now)
             {
                 joystick.Poll();
-                JoystickState nextstate = joystick.CurrentJoystickState;
+                joystick.GetCurrentState(ref obj);
 
-                byte[] buttons = nextstate.GetButtons();
 
-                for (int a = 0; a < joystick.Caps.NumberButtons; a++)
+                for (int a = 0; a < buttons.Length; ++a)
                 {
-                    if (buttons[a] != buttonsbefore[a])
+                    if (buttons[a])
                         return a;
                 }
             }
@@ -478,12 +529,12 @@ namespace MissionPlanner.Joystick
 
         public int getHatSwitchDirection()
         {
-            return (state.GetPointOfView())[0];
+            return (state.PointOfViewControllers)[0];
         }
 
         public int getNumberPOV()
         {
-            return joystick.Caps.NumberPointOfViews;
+            return state.PointOfViewControllers.Length;
         }
 
         int BOOL_TO_SIGN(bool input)
@@ -510,8 +561,8 @@ namespace MissionPlanner.Joystick
                     System.Threading.Thread.Sleep(50);
                     //joystick stuff
                     joystick.Poll();
-                    state = joystick.CurrentJoystickState;
-
+                    //state = joystick.CurrentJoystickState;
+                    joystick.GetCurrentState(ref state);
                     //Console.WriteLine(state);
 
                     if (getNumberPOV() > 0)
@@ -580,8 +631,10 @@ namespace MissionPlanner.Joystick
 
                     //Console.WriteLine("{0} {1} {2} {3}", MainV2.comPort.MAV.cs.rcoverridech1, MainV2.comPort.MAV.cs.rcoverridech2, MainV2.comPort.MAV.cs.rcoverridech3, MainV2.comPort.MAV.cs.rcoverridech4);
                 }
-                catch (InputLostException ex)
+                catch (SharpDX.SharpDXException ex)
                 {
+                    //**TODO: need something else done here for safety:
+                    //like set to loiter mode, or land... etc.  make configureable?
                     log.Error(ex);
                     clearRCOverride();
                     MainV2.instance.Invoke((System.Action)
@@ -848,6 +901,8 @@ namespace MissionPlanner.Joystick
             Custom2
         }
 
+        
+
         const int RESXu = 1024;
         const int RESXul = 1024;
         const int RESXl = 1024;
@@ -888,7 +943,7 @@ namespace MissionPlanner.Joystick
 
         public Device AcquireJoystick(string name)
         {
-            DeviceList joysticklist = Manager.GetDevices(DeviceClass.GameControl, EnumDevicesFlags.AttachedOnly);
+            DeviceList joysticklist = getDevices();//Manager.GetDevices(DeviceClass.GameControl, EnumDevicesFlags.AttachedOnly);
 
             bool found = false;
 
@@ -896,7 +951,7 @@ namespace MissionPlanner.Joystick
             {
                 if (device.ProductName == name)
                 {
-                    joystick = new Device(device.InstanceGuid);
+                    joystick = JoyStickFactory(device);//new Device(device.InstanceGuid);
                     found = true;
                     break;
                 }
@@ -905,13 +960,18 @@ namespace MissionPlanner.Joystick
             if (!found)
                 return null;
 
-            joystick.SetDataFormat(DeviceDataFormat.Joystick);
+            //joystick.SetDataFormat(DeviceDataFormat.Joystick);
 
             joystick.Acquire();
 
             System.Threading.Thread.Sleep(500);
 
             joystick.Poll();
+
+            //capture the state once so state obj isn't null, and we can start interrogating the 
+            //joystick's buttons, etc.
+            state = new JoystickState();
+            joystick.GetCurrentState(ref state);
 
             return joystick;
         }
@@ -930,15 +990,15 @@ namespace MissionPlanner.Joystick
         /// <returns></returns>
         bool getButtonState(JoyButton but, int buttonno)
         {
-            byte[] buts = state.GetButtons();
+            bool[] buts = state.Buttons;
 
             // button down
-            bool ans = buts[buttonno] > 0 && buttonpressed[buttonno] == 0; // press check + debounce
+            bool ans = buts[buttonno]  && !buttonpressed[buttonno]; // press check + debounce
             if (ans)
                 ButtonDown(but);
 
             // button up
-            ans = buts[buttonno] == 0 && buttonpressed[buttonno] > 0;
+            ans = !buts[buttonno] && buttonpressed[buttonno];
             if (ans)
                 ButtonUp(but);
 
@@ -961,7 +1021,7 @@ namespace MissionPlanner.Joystick
         {
             if (joystick == null)
                 return 0;
-            return joystick.Caps.NumberButtons;
+            return state.Buttons.Length;
         }
 
         public joystickaxis getJoystickAxis(int channel)
@@ -975,12 +1035,12 @@ namespace MissionPlanner.Joystick
 
         public bool isButtonPressed(int buttonno)
         {
-            byte[] buts = state.GetButtons();
+            bool[] buts = state.Buttons;
 
             if (buts == null || JoyButtons[buttonno].buttonno < 0)
                 return false;
 
-            return buts[JoyButtons[buttonno].buttonno] > 0;
+            return buts[JoyButtons[buttonno].buttonno];
         }
 
         public ushort getValueForChannel(int channel, string name)
@@ -990,7 +1050,8 @@ namespace MissionPlanner.Joystick
 
             joystick.Poll();
 
-            state = joystick.CurrentJoystickState;
+            //state = joystick.CurrentJoystickState;
+            joystick.GetCurrentState(ref state);
 
             ushort ans = pickchannel(channel, JoyChannels[channel].axis, JoyChannels[channel].reverse, JoyChannels[channel].expo);
             log.DebugFormat("{0} = {1} = {2}", channel, ans, state.X);
@@ -1004,7 +1065,8 @@ namespace MissionPlanner.Joystick
 
             joystick.Poll();
 
-            state = joystick.CurrentJoystickState;
+            //state = joystick.CurrentJoystickState;
+            joystick.GetCurrentState(ref state);
 
             ushort ans = pickchannel(channel, JoyChannels[channel].axis, false, 0);
             log.DebugFormat("{0} = {1} = {2}", channel, ans, state.X);
@@ -1064,87 +1126,87 @@ namespace MissionPlanner.Joystick
                     working = (int)(((float)(trim - min) / range) * ushort.MaxValue);
                     break;
                 case joystickaxis.ARx:
-                    working = state.ARx;
+                    working = state.AngularAccelerationX;
                     break;
 
                 case joystickaxis.ARy:
-                    working = state.ARy;
+                    working = state.AngularAccelerationY;
                     break;
 
                 case joystickaxis.ARz:
-                    working = state.ARz;
+                    working = state.AngularAccelerationZ;
                     break;
 
                 case joystickaxis.AX:
-                    working = state.AX;
+                    working = state.AccelerationX;
                     break;
 
                 case joystickaxis.AY:
-                    working = state.AY;
+                    working = state.AccelerationY;
                     break;
 
                 case joystickaxis.AZ:
-                    working = state.AZ;
+                    working = state.AccelerationZ;
                     break;
 
                 case joystickaxis.FRx:
-                    working = state.FRx;
+                    working = state.TorqueX;
                     break;
 
                 case joystickaxis.FRy:
-                    working = state.FRy;
+                    working = state.TorqueY;
                     break;
 
                 case joystickaxis.FRz:
-                    working = state.FRz;
+                    working = state.TorqueZ;
                     break;
 
                 case joystickaxis.FX:
-                    working = state.FX;
+                    working = state.ForceX;
                     break;
 
                 case joystickaxis.FY:
-                    working = state.FY;
+                    working = state.ForceY;
                     break;
 
                 case joystickaxis.FZ:
-                    working = state.FZ;
+                    working = state.ForceZ;
                     break;
 
                 case joystickaxis.Rx:
-                    working = state.Rx;
+                    working = state.RotationX;
                     break;
 
                 case joystickaxis.Ry:
-                    working = state.Ry;
+                    working = state.RotationY;
                     break;
 
                 case joystickaxis.Rz:
-                    working = state.Rz;
+                    working = state.RotationZ;
                     break;
 
                 case joystickaxis.VRx:
-                    working = state.VRx;
+                    working = state.AngularVelocityX;
                     break;
 
                 case joystickaxis.VRy:
-                    working = state.VRy;
+                    working = state.AngularVelocityY;
                     break;
 
                 case joystickaxis.VRz:
-                    working = state.VRz;
+                    working = state.AngularVelocityZ;
                     break;
 
                 case joystickaxis.VX:
-                    working = state.VX;
+                    working = state.VelocityX;
                     break;
 
                 case joystickaxis.VY:
-                    working = state.VY;
+                    working = state.VelocityY;
                     break;
 
                 case joystickaxis.VZ:
-                    working = state.VZ;
+                    working = state.VelocityZ;
                     break;
 
                 case joystickaxis.X:
@@ -1160,12 +1222,12 @@ namespace MissionPlanner.Joystick
                     break;
 
                 case joystickaxis.Slider1:
-                    int[] slider = state.GetSlider();
+                    int[] slider = state.Sliders;
                     working = slider[0];
                     break;
 
                 case joystickaxis.Slider2:
-                    int[] slider1 = state.GetSlider();
+                    int[] slider1 = state.Sliders;
                     working = slider1[1];
                     break;
 

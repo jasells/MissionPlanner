@@ -6,8 +6,9 @@ using System.Drawing;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
-using Microsoft.DirectX.DirectInput;
-using OpenTK.Input;
+//using Microsoft.DirectX.DirectInput;
+using SharpDX.DirectInput;
+//using OpenTK.Input;
 using MissionPlanner.Controls;
 using MissionPlanner.Utilities;
 
@@ -25,6 +26,9 @@ namespace MissionPlanner.Joystick
             InitializeComponent();
 
             MissionPlanner.Utilities.Tracking.AddPage(this.GetType().ToString(), this.Text);
+
+            //var jslist = Microsoft.Xna.Framework.Input.Joystick.GrabJoysticks();
+
         }
 
         private void Joystick_Load(object sender, EventArgs e)
@@ -164,10 +168,11 @@ namespace MissionPlanner.Joystick
         {
             try
             {
-                if (MainV2.joystick == null || MainV2.joystick.enabled == false)
+                Joystick joy = MainV2.joystick;
+
+                if (joy == null || joy.enabled == false)
                 {
                     //Console.WriteLine(DateTime.Now.Millisecond + " start ");
-                    Joystick joy = MainV2.joystick;
                     if (joy == null)
                     {
                         joy = new Joystick();
@@ -230,9 +235,9 @@ namespace MissionPlanner.Joystick
                     //Console.WriteLine(DateTime.Now.Millisecond + " end ");
                 }
             }
-            catch (InputLostException ex)
+            catch (SharpDX.SharpDXException ex)
             {
-                ex.ToString();
+                //ex.ToString();
                 if (MainV2.joystick != null && MainV2.joystick.enabled == true)
                 {
                     BUT_enable_Click(null, null);
